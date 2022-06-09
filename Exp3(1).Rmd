@@ -1,0 +1,422 @@
+---
+title: "SoundRepExp3"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+# Background
+This is script for anylyzing Experiment 3 of the sound repetition project.
+
+# Load libraries
+
+```{r}
+library(tidyverse)
+library(stringdist)
+library(lme4)
+library(lmerTest)
+```
+
+# Data preperation
+
+## Read in data
+The experiment was run on Testable as 7 separate 'mini-experiments' with different sets of stimuli. These were called 'SGs' (SG1, SG2, SG3, SG4, SG7, SG11, SG12). The results were recorded on Testable as CSV files and WAV files. Four new columns were added to the Testable CSV files: 'group' (= SG1, SG2 etc.), 'transcriptionJo' (= JB's transcription of the audio recordings), 'transcriptionMits (= MO's transcription) and 'transcriptionModel' (= agreed transcription to be used for the analysis). All 7 CSV files were then merged into a single CSV file called 'testableResults.csv'. 
+
+Demographic information about the participants on Prolific was recorded for each mini-experiment. These files were also merged into a single CSV file called 'prolificExport.csv'
+
+```{r}
+results <- read.csv("/Users/j2/Documents/Linguistics\ MA/Dissertation/Ota/Experiment\ 3/testableResults.csv") # this is the master dataframe
+participants <- read.csv ("/Users/j2/Documents/Linguistics\ MA/Dissertation/Ota/Experiment\ 3/prolificExport.csv") # use this for ptcps info
+```
+
+## Prepare dataframe for analysis
+There were issues with some participants and trials, the details of which are recorded in the experimental log. Participants with systematic issues were excluded and replaced by new participants. Problematic trials will be removed from the analysis.
+
+```{r}
+data <- filter(results, filename != "228918_210922_113815.csv" & filename != "757355_210930_132407.csv" & filename != "757355_210930_144544.csv" & filename != "464999_211004_135516.csv" & filename != "584938_211008_133923.csv" & filename!= "584938_211008_135457.csv") # remove excluded participants
+before <- length(data$filename) # number of cases before trial removal
+data <- filter(data, transcriptionModel != "EXCLUDE") # remove excluded responses
+after <- length (data$filename) # number of cases after trial removal
+```
+After this, we have `r length(unique(data$filename))` participants to analyze. The number of items removed was `r before-after`, which accounted for `r (before - after)/after * 100`% of the data.
+
+## Analyze participant information (to be completed)
+```{r}
+
+```
+
+# Phonotactic properties of the nonwords
+Neighborhood density, length-controlled positional segmental probability, biphone probability, and triphone probability are summarised for each condition (both type count and logged token frequency weighted)
+```{r paged.print=TRUE}
+phono <- read.csv("/Users/j2/Documents/Linguistics\ MA/Dissertation/Ota/Experiment\ 3/Phonotactics.csv")
+sumPhon <- phono %>%
+  group_by(condition1) %>%
+  summarise(ND.type.m = mean(n.dens_type), ND.type.sd = sd (n.dens_type), ND.log.m = mean(n.dens_log10), ND.log.sd = sd(n.dens_log10), POS.type.m = mean(lc.pos_type), POS.type.sd = sd(lc.pos_type), POS.log.m = mean(lc.pos_log10), POS.log.sd = sd(lc.pos_log10), BP.type.m = mean(bip_type), BP.type.sd = sd(bip_type), BP.log.m = mean(bip_log10), BP.log.sd = sd(bip_log10), TP.type.m = mean(tri_type), TP.type.sd = sd(tri_type), TP.log.m = mean(tri_log10), TP.log.sd = sd(tri_log10))
+print.data.frame(sumPhon)
+```
+Here are comparisons (ANOVAs) by word type. Logged token based stats are used for phonotactics. Neighborhood density is compared both on type and token counts.
+```{r}
+aov.NDtype <- aov(n.dens_type ~ condition1, data = phono)
+summary(aov.NDtype)
+aov.NDtoken <- aov(n.dens_log10 ~ condition1, data = phono)
+summary(aov.NDtoken)
+aov.PS <- aov(lc.pos_log10 ~ condition1, data = phono)
+summary(aov.PS)
+aov.BP <- aov(bip_log10 ~ condition1, data = phono)
+summary(aov.BP)
+aov.TP <- aov(tri_log10 ~ condition1, data = phono)
+summary(aov.TP)
+```
+*Conclusion*: There are no verifiable phonotactic differences between conditions.
+
+# Analysis of final recall task
+## Further data reduction
+The main analysis looks at the results of the final round of recall task. For this, we only need the rows from the relevant phase, and some of the key variables.
+```{r}
+recall.data <- filter(data, random == 5)
+recall.data <-
+  select(recall.data, c(group, filename, rowNo, condition1, condition2, key,
+  transcriptionJo, transcriptionMits, transcriptionModel, RT)) # select columns relevant to this analysis
+```
+
+## Add features
+We may want to see if there are any differences between COR, LAB and DOR repetitions (and similarly for BACK vs FRONT). So code this. We have a file called 'target.words.csv' that contains the relevant information.
+```{r}
+features <- read.csv("/Users/j2/Documents/Linguistics\ MA/Dissertation/Ota/Experiment\ 3/target.words.csv")
+recall.data <- left_join(recall.data, features, by="key") # add this to recall.data
+```
+
+
+## Compute distance measures
+The main variable of the analysis is the distance between the target (variable name: key) and the participant's recall form (variable name: transcriptionModel). We take the Levenshtein distance of the two (variable name: dist). We also divide this by the number of segments in the target to compute the mean Levenshtein distance per segment (variable name: errorRate)
+```{r}
+recall.data$dist <- stringdist(recall.data$key, recall.data$transcriptionModel, method = "lv")
+recall.data$errorRate <- recall.data$dist/nchar(recall.data$key)
+```
+
+##Compute acccuracy scores
+```{r}
+recall.data$accuracy <- ifelse((recall.data$errorRate == 0), 1, 0)
+```
+
+## Summarise data by individuals and condition1
+Here are some descriptive statistics. First, sumInd, which is the summary of the error rate per participant per condition. And second, sumCond, which shows the error rates aggregated by condition.
+```{r}
+sumInd <- recall.data %>%
+  group_by(filename, condition1) %>%
+  summarise(distance = mean(dist, na.rm=TRUE), Rate = mean(errorRate, na.rm=TRUE), Accuracy_scores = mean(accuracy, na.rm=TRUE))
+sumCond <- sumInd %>%
+  group_by(condition1) %>%
+  summarise(Rate.mean = mean(Rate), Rate.SD = sd(Rate), Rate.n= length(Rate), Rate.se = Rate.SD/sqrt(Rate.n), Accuracy_scores.mean = mean(Accuracy_scores), Accuracy_scores.SD = sd(Accuracy_scores), Accuracy_scores.n= length(Accuracy_scores), Accuracy_scores.se = Accuracy_scores.SD/sqrt(Accuracy_scores.n))
+```
+
+## Visualise differences by condition (error rate)
+Here is a simple bar graph representing the mean error rate (and SE) per condition. Fillers are included for reference purposes.
+```{r}
+plot.cond <- ggplot(sumCond, aes(x=condition1, y=Rate.mean)) +
+  geom_col() + 
+  geom_errorbar(aes(ymin = Rate.mean - Rate.se, ymax = Rate.mean + Rate.se), width=0.2)
+plot.cond
+```
+## Visualise differences by condition (accuracy scores)
+Here is a simple bar graph representing the mean error rate (and SE) per condition. Fillers are included for reference purposes.
+```{r}
+plot.cond <- ggplot(sumCond, aes(x=condition1, y=Accuracy_scores.mean)) +
+  geom_col() + 
+  geom_errorbar(aes(ymin = Accuracy_scores.mean - Accuracy_scores.se, ymax = Accuracy_scores.mean + Accuracy_scores.se), width=0.2)
+plot.cond
+```
+ 
+ 
+## Visualize item effects
+Here is a graph showing the distribution of error rates per item.
+```{r}
+plot.item <- ggplot(recall.data, aes(x=key, y=errorRate)) +
+  geom_point(position = position_jitter(width = .3, height = 0))
+plot.item +
+  facet_wrap( ~ condition1, scales = "free_x") +
+  scale_x_discrete(guide = guide_axis(n.dodge=2))
+```
+
+## Summarise data by individuals and repeated features
+We will now summarise the data by the features that are repeated
+```{r}
+sumIndFeat <- recall.data %>%
+  filter(condition1 != "filler") %>%
+  group_by(filename, repFeat) %>%
+  summarise(distance = mean(dist, na.rm=TRUE), Rate = mean(errorRate, na.rm=TRUE))
+sumCondFeat <- sumIndFeat %>%
+  group_by(repFeat) %>%
+  summarise(Rate.mean = mean(Rate), Rate.SD = sd(Rate), n= length(Rate), se = Rate.SD/sqrt(n))
+```
+
+## Visualise differences by repeated features 
+Here is a simple bar graph representing the mean error rate (and SE) per condition. Only c-reps and no-reps are included
+```{r}
+sumCondFeat2 <- sumCondFeat %>%
+  filter(!repFeat %in% c("back", "front"))
+plot.features <- ggplot(sumCondFeat2, aes(x=repFeat, y=Rate.mean)) +
+  geom_col() + 
+  geom_errorbar(aes(ymin = Rate.mean - se, ymax = Rate.mean + se), width=0.2) + 
+  scale_x_discrete(name="Repeated feature", 
+                   limits=c("lab", "cor", "dor", "none"),
+                   breaks=c("lab", "cor", "dor", "none"),
+                   labels=c("[lab]", "[cor]", "[dor]", "none")) +
+  scale_y_continuous(name="Mean error (Levenshtein distance)")
+plot.features
+```
+
+## LME analysis: Crep - Vrep - Norep (error rate)
+We run a linear mixed effects analysis on error rate with condition1 as a fixed factor and participant (= 'filename') and item (= 'key') as random factors. The full model (m1) with random slopes for participants on condition1 comes with a singularity warning, presumably because there too few items per condition (i.e., 4) to estimate the slope for each participant. Therefore, we run a model without random slopes (m2).
+```{r}
+recall.data$condition1 <- as.factor(recall.data$condition1) # convert condition1 to a factor
+recall.data$condition1 <- relevel(recall.data$condition1, ref = 'norep') # set 'norep' as a reference category
+m1 <- lmer(errorRate ~ condition1 + (1+condition1|filename) + (1|key), data = recall.data[recall.data$condition1 != 'filler', ], control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)), REML=FALSE)
+summary(m1)
+m2 <- lmer(errorRate ~ condition1 + (1|filename) + (1|key), data = recall.data[recall.data$condition1 != 'filler', ], control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)), REML=FALSE)
+summary(m2)
+```
+
+## LME analysis: Crep - Vrep - Norep (accuracy rate)
+We run a linear mixed effects analysis on error rate with condition1 as a fixed factor and participant (= 'filename') and item (= 'key') as random factors. The full model (m1) with random slopes for participants on condition1 comes with a singularity warning, presumably because there too few items per condition (i.e., 4) to estimate the slope for each participant. Therefore, we run a model without random slopes (m2).
+```{r}
+recall.data$condition1 <- as.factor(recall.data$condition1) # convert condition1 to a factor
+recall.data$condition1 <- relevel(recall.data$condition1, ref = 'norep') # set 'norep' as a reference category
+m1_accuracy <- lmer(accuracy ~ condition1 + (1+condition1|filename) + (1|key), data = recall.data[recall.data$condition1 != 'filler', ], control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)), REML=FALSE)
+summary(m1)
+m2_accuracy <- lmer(accuracy  ~ condition1 + (1|filename) + (1|key), data = recall.data[recall.data$condition1 != 'filler', ], control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)), REML=FALSE)
+summary(m2)
+```
+
+
+## LME analysis: Features in Creps
+```{r}
+recall.data2 <- recall.data %>%
+  filter(!repFeat %in% c("back", "front")) %>%
+  filter(condition1 != "filler")
+recall.data2$repFeat <- as.factor(recall.data2$repFeat) # convert repFeat to a factor
+recall.data2$repFeat <- relevel(recall.data2$repFeat, ref = 'none') # set 'none' as a reference category
+m3 <- lmer(errorRate ~ repFeat + (1+repFeat|filename) + (1|key), data = recall.data2, control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)), REML=FALSE)
+summary(m3)
+m4 <- lmer(errorRate ~ repFeat + (1|filename) + (1|key), data = recall.data2, control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)), REML=FALSE)
+summary(m4)
+```
+
+
+# Further analyses
+## Analysis of the role of consonants vs vowels
+One thing we might be interested in examining is whether the advantage of the consonant repetition arises through better retention of the repeated consonants per se or whether it also results in better retention of the vowels. To do this, we should first create separate variables for the consonants and vowels in the target ('t.cons' and 't.vowels') and also for the consonants and vowels in the response ('r.cons' and 'r.vowels'). And then compute the error rates for consonants only and for vowels only.
+
+```{r}
+recall.data$t.cons <- stringr::str_replace_all(recall.data$key,"([aeiouxAEIOU@])", '') # remove vowels from targets
+recall.data$t.vowels <- stringr::str_replace_all(recall.data$key,"([^a^e^i^o^u^x^A^E^I^O^U])", '') # remove consonants from targets
+recall.data$r.cons <- stringr::str_replace_all(recall.data$transcriptionModel,"([aeiouxAEIOU@])", '') # remove vowels from responses
+recall.data$r.vowels <- stringr::str_replace_all(recall.data$transcriptionModel,"([^a^e^i^o^u^x^A^E^I^O^U])", '') # remove consonants from responses
+recall.data$c.match <- stringdist(recall.data$t.cons, recall.data$r.cons, method = "lv")/nchar(recall.data$t.cons) # Levenshtein distance of consonants - divided by the number of consonants in the target
+recall.data$v.match <- stringdist(recall.data$t.vowels, recall.data$r.vowels, method = "lv")/nchar(recall.data$t.vowels)
+```
+
+Let's visualise the results.
+```{r}
+sumInd.cMatch <- recall.data %>%
+  group_by(filename, condition1) %>%
+  summarise(c.error = mean(c.match, na.rm=TRUE))
+sumCond.cMatch <- sumInd.cMatch %>%
+  group_by(condition1) %>%
+  summarise(c.error.mean = mean(c.error), c.error.SD = sd(c.error), n= length(c.error), se = c.error.SD/sqrt(n))
+sumInd.vMatch <- recall.data %>%
+  group_by(filename, condition1) %>%
+  summarise(v.error = mean(v.match, na.rm=TRUE))
+sumCond.vMatch <- sumInd.vMatch %>%
+  group_by(condition1) %>%
+  summarise(v.error.mean = mean(v.error), v.error.SD = sd(v.error), n= length(v.error), se = v.error.SD/sqrt(n))
+plot.cMatch <- ggplot(sumCond.cMatch, aes(x=condition1, y=c.error.mean)) +
+  geom_col() + 
+  geom_errorbar(aes(ymin = c.error.mean - se, ymax = c.error.mean + se), width=0.2)
+plot.cMatch + ggtitle("Error rates for consonants")
+plot.vMatch <- ggplot(sumCond.vMatch, aes(x=condition1, y=v.error.mean)) +
+  geom_col() + 
+  geom_errorbar(aes(ymin = v.error.mean - se, ymax = v.error.mean + se), width=0.2)
+plot.vMatch + ggtitle("Error rates for vowels")
+```
+
+As expected, the effects of consonant repetition are more noticeable for the retention of consonants, although descriptively, vowels also seem to be better retained in crep words. The stats below, however, only confirms the effects on consonant retention. This analysis also shows that vowel repetition does not lead to better retention of vowels.
+ 
+```{r}
+m3 <- lmer(c.match ~ condition1 + (1|filename) + (1|key), data = recall.data[recall.data$condition1 != 'filler', ], control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)), REML=FALSE)
+summary(m3)
+m4 <- lmer(v.match ~ condition1 + (1|filename) + (1|key), data = recall.data[recall.data$condition1 != 'filler', ], control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)), REML=FALSE)
+summary(m4)
+```
+
+
+## Analysis of error patterns 1: are repeated consonants and/or vowels being introduced in noreps?
+```{r}
+#Compute proportion of C and V repetitions observed in the responses
+
+recall.data$repeated.c <- ifelse(grepl('.*(\\D)\\1.*', recall.data$r.cons),1,0) # look for adjacent repetition of Cs in the response
+recall.data$repeated.v <- ifelse(grepl('.*(\\D)\\1.*', recall.data$r.vowels),1,0) # look for adjacent repetition of Vs in the response
+sumInd.rep <- recall.data %>%
+  group_by(filename, condition1) %>%
+  summarise(ind.repeated.c = mean(repeated.c, na.rm=TRUE), ind.repeated.v = mean(repeated.v, na.rm=TRUE)) # introduced repetitions aggregated by participant and word type
+
+sumCond.rep <- sumInd.rep %>%
+  group_by(condition1) %>%
+  summarise(Repeated.c.mean = mean(ind.repeated.c), Repeated.c.SD = sd(ind.repeated.c), n.repeated.c = length(ind.repeated.c), se.repeated.c = Repeated.c.SD/sqrt(n.repeated.c), Repeated.v.mean = mean(ind.repeated.v), Repeated.v.SD = sd(ind.repeated.v), n.repeated.v = length(ind.repeated.v), se.repeated.v = Repeated.v.SD/sqrt(n.repeated.v)) # introduced repetitions aggregated by word type
+
+# calculate proportion of C rep in words w/ C errors and proportion of V rep in words w/ V errors
+CRepsInErrors.ind <- recall.data %>% 
+  filter(c.match > 0) %>%
+  group_by(filename, condition1) %>%
+  summarise(meanRepC = mean(repeated.c, na.rom=TRUE))
+VRepsInErrors.ind <- recall.data %>% 
+  filter(v.match > 0) %>%
+  group_by(filename, condition1) %>%
+  summarise(meanRepV = mean(repeated.v, na.rom=TRUE))
+
+#Simulate proportion of C repetitions in noreps if they were occurring by chance
+norep.data <- filter(recall.data, condition1 == "norep") #Only look at noreps
+c.array.noreps <-strsplit(paste(norep.data$r.cons, collapse = "", sep = ""), split="") # concatanate values in r.cons, then chop up
+c.array.noreps <-array(unlist(c.array.noreps)) # convert list to array
+c.match = replicate(10000, mean(replicate(4, as.numeric(identical(sample(c.array.noreps, size = 1, replace = TRUE), (sample(c.array.noreps, size = 1, replace = TRUE))))))) #Run simulation
+norep.sumInd <- (filter(sumInd.rep, condition1=="norep")) #Filter individual data for noreps only
+t.test (norep.sumInd$ind.repeated.c, c.match, alternative="two.sided", var.equal = FALSE) #Run t-test
+t.test(CRepsInErrors.ind[CRepsInErrors.ind$condition1 == 'norep', ]$meanRepC, c.match, alternative="two.sided", var.equal = FALSE) # t-test against c reps introduced in words w/ c errors
+
+#Simulate proportion of V repetitions in noreps if they were occurring by chance
+v.array.noreps <-strsplit(paste(norep.data$r.vowels, collapse = "", sep = ""), split="") # concatanate values in r.cons, then chop up
+v.array.noreps <-array(unlist(v.array.noreps)) # convert list to array
+v.match = replicate(10000, mean(replicate(4, as.numeric(identical(sample(v.array.noreps, size = 1, replace = TRUE), (sample(v.array.noreps, size = 1, replace = TRUE))))))) #Run simulation
+norep.sumInd <- (filter(sumInd.rep, condition1=="norep")) #Filter individual data for noreps only
+t.test (norep.sumInd$ind.repeated.v, v.match, alternative="two.sided", var.equal = FALSE) #Run t-test
+t.test(VRepsInErrors.ind[VRepsInErrors.ind$condition1 == 'norep', ]$meanRepV, v.match, alternative="two.sided", var.equal = FALSE) # t-test against v reps introduced in words w/ v errors
+
+# Use ANOVA to compare condition x CvsV interaction
+long.sumInd.rep <- sumInd.rep %>% gather(CV, reps, ind.repeated.c:ind.repeated.v) # turn DF to a long form
+aov1 <- aov(reps ~ condition1*CV, data = long.sumInd.rep[long.sumInd.rep$condition1 != "filler", ])
+summary(aov1)
+```
+
+## Analysis of error patterns 2: are feature-sharing consonants and/or vowels being introduced in noreps?
+
+# First, we will recode the consonants and vowels in the participant's responses into number coded features: primary place of articulation (rPlace), backness (rBack) and height (rHeight)
+```{r}
+recall.data$rPlace <- recall.data$r.cons %>% 
+  str_replace_all(c("b"="L", "C"="C", "d"="C", "D"="C", "f"="L", "g"="D", "G"="D", "h"="G", "J"="C", "k"="D", "l"="C", "m"="L", "n"="C", "p"="L", "r"="C", "s"="C", "S"="C", "t" = "C", "T"="C", "v" = "L", "w" = "L", "y"="C", "z" = "C", "Z"="C")) # recode POA to L = Lab, C = Cor, D = Dor, G = Glot. Schwa (x) is left untouched.
+recall.data$rBack <- recall.data$r.vowel %>% str_replace_all(c("a" = "B", "i" = "F", "o" = "B", "u" = "B", "e" = "F", "@"="F", "A"="B", "I"="F", "O"="B", "U"="B", "E"="F")) # recode vowel backness to F = front, B = back
+recall.data$rHeight <- recall.data$r.vowel %>% str_replace_all(c("a" = "L", "i" = "H", "o" = "M", "u" = "H", "e" = "M", "@"="L", "A"="L", "I"="H", "O"="M", "U"="H", "E"="M")) # recode vowel› height to H = high, M = mid, L = low
+```
+
+Then we repeat the repetition analysis on the features.
+```{r}
+recall.data$repPlace <- ifelse(grepl('.*(\\D)\\1.*', recall.data$rPlace),1,0) # look for adjacent repetition of primary POA in the response
+recall.data$repBack <- ifelse(grepl('.*(\\D)\\1.*', recall.data$rBack),1,0) # look for adjacent repetition of v backness in the response
+recall.data$repHeight <- ifelse(grepl('.*(\\D)\\1.*', recall.data$rHeight),1,0) # look for adjacent repetition of v height in the response
+sumInd.repFeature <- recall.data %>%
+  group_by(filename, condition1) %>%
+  summarise(ind.repPlace = mean(repPlace, na.rm=TRUE), ind.repBack = mean(repBack, na.rm=TRUE), ind.repHeight = mean(repHeight, na.rm=TRUE)) # introduced feature repetitions aggregated by participant and word type
+# calculate proportion of C rep in words w/ C errors and proportion of V rep in words w/ V errors
+FRepsInCErrors.ind <- recall.data %>% 
+  filter(c.match > 0) %>%
+  group_by(filename, condition1) %>%
+  summarise(meanRepPlace = mean(repPlace, na.rom=TRUE))
+FRepsInVErrors.ind <- recall.data %>% 
+  filter(v.match > 0) %>%
+  group_by(filename, condition1) %>%
+  summarise(meanRepBack = mean(repBack, na.rom=TRUE), meanRepHeight = mean(repHeight, na.rm=TRUE))
+```
+# Now add the simulation data
+```{r}
+norep.data <- filter(recall.data, condition1 == "norep") # update norep.data
+# For consonant POA
+place.array.noreps <-strsplit(paste(norep.data$rPlace, collapse = "", sep = ""), split="") # concatanate values in r.cons, then chop up
+place.array.noreps <-array(unlist(place.array.noreps)) # convert list to array
+place.match = replicate(10000, mean(replicate(4, as.numeric(identical(sample(place.array.noreps, size = 1, replace = TRUE), (sample(place.array.noreps, size = 1, replace = TRUE))))))) #Run simulation
+norep.repFeature <- (filter(sumInd.repFeature, condition1=="norep")) #Filter individual data for noreps only
+t.test (norep.repFeature$ind.repPlace, place.match, alternative="two.sided", var.equal = FALSE) #Run t-test
+t.test(FRepsInCErrors.ind[FRepsInCErrors.ind$condition1 == 'norep', ]$meanRepPlace, place.match, alternative="two.sided", var.equal = FALSE) # t-test against place reps introduced in words w/ c errors
+
+back.array.noreps <-strsplit(paste(norep.data$rBack, collapse = "", sep = ""), split="") # concatanate values in r.cons, then chop up
+back.array.noreps <-array(unlist(back.array.noreps)) # convert list to array
+back.match = replicate(10000, mean(replicate(4, as.numeric(identical(sample(back.array.noreps, size = 1, replace = TRUE), (sample(back.array.noreps, size = 1, replace = TRUE))))))) #Run simulation
+t.test (norep.repFeature$ind.repBack, back.match, alternative="two.sided", var.equal = FALSE) #Run t-test
+t.test(FRepsInVErrors.ind[FRepsInVErrors.ind$condition1 == 'norep', ]$meanRepBack, back.match, alternative="two.sided", var.equal = FALSE) # t-test against backness reps introduced in words w/ v errors
+
+height.array.noreps <-strsplit(paste(norep.data$rHeight, collapse = "", sep = ""), split="") # concatanate values in r.cons, then chop up
+height.array.noreps <-array(unlist(height.array.noreps)) # convert list to array
+height.match = replicate(10000, mean(replicate(4, as.numeric(identical(sample(height.array.noreps, size = 1, replace = TRUE), (sample(height.array.noreps, size = 1, replace = TRUE))))))) #Run simulation
+norep.repFeature <- (filter(sumInd.repFeature, condition1=="norep")) #Filter individual data for noreps only
+t.test (norep.repFeature$ind.repHeight, height.match, alternative="two.sided", var.equal = FALSE) #Run t-test
+t.test(FRepsInVErrors.ind[FRepsInVErrors.ind$condition1 == 'norep', ]$meanRepHeight, height.match, alternative="two.sided", var.equal = FALSE) # t-test against height reps introduced in words w/ v errors
+```
+
+## Analysis of error patterns 3: homonymy effects
+```{r}
+sumHom <- filter(recall.data, transcriptionModel != '')  # remove null responses
+sumHom <- filter(sumHom, condition1 != 'filler')
+sumHom <- select(sumHom, c(filename, transcriptionModel, repeated.c, repeated.v)) %>%
+  group_by(filename, transcriptionModel) #%>% # group data by participants and responses
+sumHom <- mutate(sumHom, objectN= length(transcriptionModel) )
+sumHom$homonymy <- ifelse((sumHom$objectN > 1), 1, 0)
+sumHom <- filter(sumHom, homonymy==1) %>%
+  group_by(filename, repeated.c, repeated.v) %>%
+  summarise(unique(transcriptionModel))
+
+# sumHom <- unique(sumHom) 
+#sumHom <- mutate(sumHom, homonymy= ifelse((sumHom$objectN > 1), 1, 0) )
+  #summarise(objectN= length(transcriptionModel)) # count the number of cases each response form was used
+  #sumHom$homonymy <- ifelse((sumHom$objectN > 1), 1, 0)
+```
+  
+## Analysis with perceptual factors
+There is some concern that the the effects we see here might be due to perceptual accuracy differences between the items. So here's an reanalysis of the recall effect that includes the by-item perceptual error rates as a factor (ByItemPerc.VcAdj).
+```{r}
+perc <- read.csv("/Users/j2/Documents/Linguistics\ MA/Dissertation/Ota/Experiment\ 3/percep.item.csv")
+recall.data <- recall.data %>% left_join(perc)
+recall.data$condition1 <- as.factor(recall.data$condition1) # convert condition1 to a factor
+recall.data$condition1 <- relevel(recall.data$condition1, ref = 'norep') # set 'norep' as a reference category
+m5 <- lmer(errorRate ~ condition1+ByItemPerc.VcAdj + (1|filename) + (1|key), data = recall.data[recall.data$condition1 != 'filler', ], control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)), REML=FALSE)
+summary(m5)
+```
+*Conclusion*: Recall is better for crep compared to norep even when we control for perceptual differences.
+
+# Analysis of object-matching task
+## Further data reduction
+This analysis looks at the results of the object-matching ('comprehension') task. For this, we only need the rows from the relevant phase, and some of the key variables.
+```{r}
+matching.data <- filter(data, trialText == "Choose the right object")
+matching.data <-
+  select(matching.data, c(group, filename, stim1, stim2, stim3, stim4, condition1, condition2, key,
+  response, RT)) # select columns relevant to this analysis
+```
+
+## Code additional data
+We add the variable 'correct' (1 for match, 0 for nonmatch) and 'item', which shows the correct stimulus.
+```{r}
+matching.data$item[matching.data$key==1] <- matching.data$stim1
+matching.data$item[matching.data$key==2] <- matching.data$stim2
+matching.data$item[matching.data$key==3] <- matching.data$stim3
+matching.data$item[matching.data$key==4] <- matching.data$stim4
+matching.data <- matching.data %>% 
+  mutate(correct = ifelse(key == response, 1, 0))
+```
+
+## Descriptive statistics
+```{r}
+sumInd.matching <- matching.data %>%
+  group_by(filename, condition1) %>%
+  summarise(accuracy = mean(correct, na.rm=TRUE))
+sumCond.matching <- sumInd.matching %>%
+  group_by(condition1) %>%
+  summarise(accuracy.mean = mean(accuracy), accuracy.SD = sd(accuracy), n= length(accuracy), se = accuracy.SD/sqrt(n))
+```
+
+## Statistical comparison
+```{r}
+matching.data$condition1 <- as.factor(matching.data$condition1) # convert condition1 to a factor
+matching.data$condition1 <- relevel(matching.data$condition1, ref = 'norep') # set 'norep' as a reference category
+m6 <- glmer(correct ~ condition1 + (1|filename) + (1|item), data = matching.data[matching.data$condition1 != 'filler', ], family = binomial, control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+summary(m6)
+```
+*Conclusion*: No effects of condition on the object-word matching task.
